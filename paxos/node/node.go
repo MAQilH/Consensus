@@ -18,7 +18,7 @@ type PrepareResponse struct {
 }
 
 type AcceptResponse struct {
-	accepted      bool
+	Accepted      bool
 	PromisedStamp int
 }
 
@@ -28,6 +28,8 @@ type Node interface {
 	AcceptStamp(nodeId int, stamp int, value int) (AcceptResponse, error)
 	GetID() int
 	AppendNode(node Node)
+	Propose(value int)
+	GetDecision() (int, int)
 }
 
 type node struct {
@@ -38,6 +40,7 @@ type node struct {
 	nodeCount    int
 	promiseStamp int
 	id           int
+	proposeValue int
 }
 
 type prepareState struct {
@@ -65,7 +68,12 @@ func NewNode(id int) *node {
 		promiseStamp: 0,
 		id:           id,
 		idle:         true,
+		proposeValue: id,
 	}
+}
+
+func (n *node) Propose(value int) {
+	n.proposeValue = value
 }
 
 func (n *node) AppendNode(node Node) {
@@ -111,20 +119,20 @@ func (n *node) sendPrepareRequest() error {
 				logrus.WithError(err).Warnf("node %v can't send prepare request to node %v", n.id, node.GetID())
 				return nil
 			}
-			state.mu.Lock()
 			if res.Promise {
+				state.mu.Lock()
 				state.promissedCount += 1
 				if state.maxStamp < res.MaxStamp {
 					state.maxStamp = res.MaxStamp
 					state.value = res.Value
 				}
+				state.mu.Unlock()
 			} else {
 				if n.promiseStamp < res.PromisedStamp {
 					n.promiseStamp = res.PromisedStamp
 				}
 				return fmt.Errorf("prepare cancelled, there is a higher stamp")
 			}
-			state.mu.Unlock()
 			return nil
 		})
 	}
@@ -143,7 +151,7 @@ func (n *node) sendPrepareRequest() error {
 	if state.maxStamp > -1 {
 		selectedValue = state.value
 	} else {
-		selectedValue = n.id
+		selectedValue = n.proposeValue
 	}
 
 	n.stamp = candidateStamp
@@ -166,7 +174,7 @@ func (n *node) sendAcceptRequest() error {
 				logrus.WithError(err).Warnf("node %v can't send accept request to node %v", n.id, node.GetID())
 				return nil
 			}
-			if !res.accepted {
+			if !res.Accepted {
 				state.mu.Lock()
 				if res.PromisedStamp > state.maxPromissedStamp {
 					state.maxPromissedStamp = res.PromisedStamp
@@ -218,7 +226,7 @@ func (n *node) AcceptStamp(nodeId int, stamp int, value int) (AcceptResponse, er
 		PromisedStamp: n.promiseStamp,
 	}
 	if n.promiseStamp > stamp {
-		res.accepted = false
+		res.Accepted = false
 		return res, nil
 	}
 
@@ -228,10 +236,14 @@ func (n *node) AcceptStamp(nodeId int, stamp int, value int) (AcceptResponse, er
 	n.stamp = stamp
 	n.value = value
 
-	res.accepted = true
+	res.Accepted = true
 	return res, nil
 }
 
 func (n *node) GetID() int {
 	return n.id
+}
+
+func (n *node) GetDecision() (int, int) {
+	return n.stamp, n.value
 }
