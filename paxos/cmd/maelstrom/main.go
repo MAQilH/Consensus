@@ -1,8 +1,3 @@
-// Package main adapts the existing paxos/node algorithm to Maelstrom's
-// stdio protocol, so it can be tested under Maelstrom's network partition
-// and process-crash fault injection. It contains no consensus logic of its
-// own: it only translates Maelstrom messages into calls on node.Node and
-// vice versa.
 package main
 
 import (
@@ -100,9 +95,6 @@ func (t *transport) reply(dest string, inReplyTo int, body map[string]any) {
 	t.send(dest, body)
 }
 
-// remoteNode implements node.Node by forwarding PrepareStamp/AcceptStamp
-// over the Maelstrom transport instead of an in-process call. Serve and
-// AppendNode are unused on a remote peer, so they are no-ops.
 type remoteNode struct {
 	id      int
 	destStr string
@@ -171,8 +163,6 @@ func main() {
 
 	reader := bufio.NewReaderSize(os.Stdin, 1<<20)
 
-	// The first message from Maelstrom is always init; handle it
-	// synchronously before wiring up the rest of the cluster.
 	line, err := reader.ReadString('\n')
 	if err != nil {
 		logrus.WithError(err).Fatal("failed to read init message")
@@ -224,8 +214,6 @@ func main() {
 		}
 	}()
 
-	// Periodically log the node's current (stamp, value) so convergence
-	// can be checked from the captured logs after a test run.
 	go func() {
 		for range time.Tick(time.Second) {
 			stamp, value := localNode.GetDecision()
@@ -340,10 +328,6 @@ func main() {
 			case body.To == body.From:
 				tr.reply(env.Src, base.MsgID, map[string]any{"type": "cas_ok"})
 			default:
-				// The decided value is permanent: this single-decree algorithm
-				// never re-proposes after reaching a decision, so a cas that
-				// would need to change an already-decided value cannot be
-				// honored.
 				tr.reply(env.Src, base.MsgID, map[string]any{
 					"type": "error", "code": 10, "text": "decided value cannot be changed",
 				})
@@ -357,12 +341,6 @@ func main() {
 	}
 }
 
-// handleWrite nudges the node to propose the client's value, then waits to
-// see whether the node's own (unmodified) decision logic actually settles
-// on it. If a decision is reached, it reports success or failure honestly;
-// if no decision is reached before the deadline, it sends no reply at all,
-// which Maelstrom correctly records as an ambiguous (:info) outcome rather
-// than a false ok/fail.
 func handleWrite(localNode node.Node, tr *transport, dest string, msgID int, value int) {
 	localNode.Propose(value)
 
